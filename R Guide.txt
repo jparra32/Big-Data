@@ -1,0 +1,349 @@
+11. For this exercise use data set visitors, the monthly Australian short-term overseas visitors data, May 1985-April 2005.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Question11}
+# a. Make a time plot of your data and describe the main features of the series.
+str(visitors)
+head(visitors)
+autoplot(visitors)
+ggseasonplot(visitors)
+# Can see general increasing trend and monthly seasonality. And I can also find the dramatic decrease in May, 2003.
+# b. Split your data into a training set and a test set comprising the last two years of available data. Forecast the test set using Holt-Winters' multiplicative method.
+visitors_train <- subset(visitors, 
+                         end = length(visitors) - 24)
+visitors_test <- subset(visitors,
+                        start = length(visitors) - 23)
+hw_mul_visitors_train <- hw(visitors_train,
+                            h = 24,
+                            seasonal = "multiplicative")
+# c. Why is multiplicative seasonality necessary here?
+autoplot(hw_mul_visitors_train)
+# Can see that the seasonality effect increased as the number of visitors increased. Additive seasonality can't reflect the situation to the model and to the forecast.
+# d. Forecast the two-year test set using each of the following methods:
+# d-1. an ETS model;
+fc_ets_visitors_train <- forecast(ets(visitors_train), h = 24)
+autoplot(fc_ets_visitors_train)
+# d-2. an additive ETS model applied to a Box-Cox transformed series;
+fc_ets_add_BoxCox_visitors_train <- forecast(
+  ets(visitors_train, 
+      lambda = BoxCox.lambda(visitors_train),
+      additive.only = TRUE),
+  h = 24
+)
+autoplot(fc_ets_add_BoxCox_visitors_train)
+# d-3. a seasonal naive method;
+fc_snaive_visitors_train <- snaive(visitors_train, h = 24)
+autoplot(fc_snaive_visitors_train)
+# d-4. an STL decomposition applied to the Box-Cox transformed data followed by an ETS model applied to the seasonally adjusted (transformed) data.
+fc_BoxCox_stl_ets_visitors_train <- visitors_train %>%
+  stlm(
+    lambda = BoxCox.lambda(visitors_train),
+    s.window = 13,
+    robust = TRUE,
+    method = "ets"
+  ) %>%
+  forecast(h = 24)
+autoplot(fc_BoxCox_stl_ets_visitors_train)
+# e. Which method gives the best forecasts? Does it pass the residual tests?
+accuracy(hw_mul_visitors_train, visitors_test)
+accuracy(fc_ets_visitors_train, visitors_test)
+accuracy(fc_ets_add_BoxCox_visitors_train, visitors_test)
+accuracy(fc_snaive_visitors_train, visitors_test)
+accuracy(fc_BoxCox_stl_ets_visitors_train, visitors_test)
+# The result when the models are rated according to accuracy using test set:
+# snaive > additive ETS with BoxCox transformation - ETS(A, A, A) > STL + ETS(M, A, N) with BoxCox transformation > ETS (M, Ad, M) > Holt-Winters' multiplicative method
+# f. Compare the same five methods using time series cross-validation with the tsCV function instead of using a training and test set. Do you come to the same conclusions?
+# first, make functions to make model to yield forecast class object
+fets_add_BoxCox <- function(y, h) {
+  forecast(ets(
+    y,
+    lambda = BoxCox.lambda(y),
+    additive.only = TRUE
+  ),
+  h = h)
+}
+fstlm <- function(y, h) {
+  forecast(stlm(
+    y, 
+    lambda = BoxCox.lambda(y),
+    s.window = frequency(y) + 1,
+    robust = TRUE,
+    method = "ets"
+  ),
+  h = h)
+}
+fets <- function(y, h) {
+  forecast(ets(y),
+           h = h)
+  }
+# I'll compare the models using RMSE
+sqrt(mean(tsCV(visitors, snaive, h = 1)^2, na.rm = TRUE))
+sqrt(mean(tsCV(visitors, fets_add_BoxCox, h = 1)^2,
+          na.rm = TRUE))
+sqrt(mean(tsCV(visitors, fstlm, h = 1)^2,
+          na.rm = TRUE))
+sqrt(mean(tsCV(visitors, fets, h = 1)^2, na.rm = TRUE))
+sqrt(mean(tsCV(visitors, hw, h = 1, 
+               seasonal = "multiplicative")^2,
+          na.rm = TRUE))
+# tsCV errors show that the best model is the STL + ETS(M, A, N) model and the worst model is seasonal naive model. If I hadn't calculated accuracy using test set, I couldn't have known
+that the forecasts from seasonal naive method were the most accurate ones.
+
+
+
+11. Consider the total net generation of electricity (in billion kilowatt hours) by the U.S. electric industry (monthly for the period January 1973 - June 2013). (Data set usmelec.) In general there are two peaks per year: in mid-summer and mid-winter.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Question11}
+# a. Examine the 12-month moving average of this series to see what kind of trend is involved.
+usmelec_ma2x12 <- ma(usmelec, order = 12, centre = TRUE)
+autoplot(usmelec, series = "Data") +
+  autolayer(usmelec_ma2x12, series = "2X12-MA") +
+  ylab(expression(paste("Electricity(x", 10^{9}, "KWh)"))) + 
+  ggtitle("Monthly total net generation of electricity") +
+  scale_color_discrete(breaks = c("Data", "2X12-MA"))
+# Total net generation amount increased first but stoped increasing from about 2008.
+# b. Do the data need transforming? If so, find a suitable transformation.
+# The data show bigger variation for bigger amount. Therefore I think that Box-Cox transformation would be suitable for the data.
+lambda_usmelec <- BoxCox.lambda(usmelec)
+# c. Are the data stationary? If not, find an appropriate differencing which yields stationary data.
+# The data are non-stationary.
+ndiffs(usmelec)
+nsdiffs(usmelec)
+# I need to do 1 seasonal differencing to make the data stationary. If seasonal differencing isn't enough to make them stationary, I need to do first differencing, too.
+# d. Identify a couple of ARIMA models that might be useful in describing the time series. Which of your models is the best according to their AIC values?
+ggtsdisplay(diff(
+  BoxCox(usmelec, lambda_usmelec),
+  lag = 12
+  ))
+# Definitely, I need to use first differencing, too.
+ggtsdisplay(
+  diff(
+    diff(
+      BoxCox(usmelec, lambda_usmelec),
+      lag = 12
+    )
+  )
+)
+# I think that ARIMA(0, 1, 2)(0, 1, 1)[12] with Box-Cox transformation model might describe the data well. I'll try ARIMA(0, 1, 3)(0, 1, 1)[12] with Box-Cox transformation model, too.
+usmelec_arima.0.1.2.0.1.1.12 <- Arima(
+  usmelec,
+  lambda = lambda_usmelec,
+  order = c(0, 1, 2),
+  seasonal = c(0, 1, 1)
+)
+usmelec_arima.0.1.3.0.1.1.12 <- Arima(
+  usmelec,
+  lambda = lambda_usmelec,
+  order = c(0, 1, 3),
+  seasonal = c(0, 1, 1)
+)
+usmelec_arima.0.1.2.0.1.1.12$aic
+usmelec_arima.0.1.3.0.1.1.12$aic
+# ARIMA(0, 1, 2)(0, 1, 1)[12] with Box-Cox transformation model was the best.
+# e. Estimate the parameters of your best model and do diagnostic testing on the residuals. Do the residuals resemble white noise? If not, try to find another ARIMA model which fits better.
+usmelec_arima.0.1.2.0.1.1.12
+#theta1 = -0.4317, theta2 = -0.2552, phis1 = -0.8536
+checkresiduals(usmelec_arima.0.1.2.0.1.1.12)
+# Ljung-Box test result shows that the residuals can be thought of as white noise. And they are normally distributed.
+# I want to know what model was selected if I used auto.arima function. I'll try it.
+usmelec_autoarima <- auto.arima(
+  usmelec,
+  lambda = lambda_usmelec
+)
+usmelec_autoarima
+# The result is ARIMA(2, 1, 4)(0, 0, 2)[12] with drift after Box-Cox transformation model. AIC is -4722. But I can't compare the AIC value with what I got above, because the number of differencing was different(Differencing changes the way the likelihood is computed).
+checkresiduals(usmelec_autoarima)
+# And the residuals aren't like white noise. Therefore I'll choose ARIMA(0, 1, 2)(0, 1, 1)[12] with Box-Cox transformation model.
+# f. Forecast the next 15 years of electricity generation by the U.S. electric industry. Get the latest figures from https://goo.gl/WZIItv to check the accuracy of your forecasts.
+fc_usmelec_arima.0.1.2.0.1.1.12 <- forecast(
+  usmelec_arima.0.1.2.0.1.1.12,
+  h = 12*15
+)
+# Get the latest figures.
+usmelec.new <- read.csv("MER_T07_02A.csv", sep = ",")
+# need to do data munging before using the data.
+# make new columns Year, Month using YYYYMM column.
+usmelec.new[, "Year"] <- as.numeric(
+  substr(usmelec.new[, "YYYYMM"], 1, 4)
+  )
+usmelec.new[, "Month"] <- as.numeric(
+  substr(usmelec.new[, "YYYYMM"], 5, 6)
+  )
+# make usmelec.new only have Year, Month and Value columns with net generation total data.
+usmelec.new <- subset(
+  usmelec.new, 
+  Description == "Electricity Net Generation Total, All Sectors", 
+  select = c("Year", "Month", "Value")
+  )
+# remove data if month is 13. They are old yearly data.
+usmelec.new <- subset(usmelec.new, Month != 13)
+# change the Value column data type to number. And divide the numbers by 1000 because the unit of the values in usmelec.new are Million KWh, not Billion KWh.
+usmelec.new[, "Value"] <- as.numeric(
+  as.character(usmelec.new[, "Value"])
+  )/1000
+# as.numeric(usmelec.new[, "Value"]) yields wrong data. Need to recognize the letters as character first, and then change the type as number. 
+head(usmelec.new)
+tail(usmelec.new)
+# first observation was taken in January, 1973. Final observation was taken in October, 2017.
+# make ts time series using usmelec.new Value column data.
+usmelec.new.ts <- ts(
+  usmelec.new[, "Value"], 
+  start = c(1973, 1), 
+  frequency = 12
+  )
+tail(usmelec.new.ts)
+# final observation was taken in October, 2017 as expected. 
+# get accuracy for 4 years of forecast horizon.
+usmelec.new.ts_next4years <- subset(
+  usmelec.new.ts, 
+  start = length(usmelec) + 1,
+  end = length(usmelec) + 12*4
+)
+accuracy(
+  fc_usmelec_arima.0.1.2.0.1.1.12, 
+  usmelec.new.ts_next4years
+  )
+# plot the results
+autoplot(fc_usmelec_arima.0.1.2.0.1.1.12, series = "Forecasts") +
+  autolayer(usmelec.new.ts, series = "Real data") +
+  scale_x_continuous(limits = c(2010, 2030)) +
+  ggtitle("Forecast from ARIMA(0,1,2)(0,1,1)[12] with real data")
+# Real data are really similar to the forecasts. Even when they were different, real data didn't get out of the prediction interval.
+# g. How many years of forecasts do you think are sufficiently accurate to be usable?
+# In usmelec data case, even 4 years of forecasts were sufficiently accurate to be usable. I think that it happened because the pattern in the data almost didn't change.
+
+
+18.Before doing this exercise, you will need to install the Quandl package in R using
+
+18a.Select a time series from Quandl. Then copy its short URL and import the data using
+
+library(Quandl)
+## Warning: package 'Quandl' was built under R version 4.0.3
+## Loading required package: xts
+## Warning: package 'xts' was built under R version 4.0.2
+## Loading required package: zoo
+## Warning: package 'zoo' was built under R version 4.0.2
+## 
+## Attaching package: 'zoo'
+## The following objects are masked from 'package:base':
+## 
+##     as.Date, as.Date.numeric
+ngd = Quandl("EIA/AEO_2016_REF_NO_CPP_PRCE_NA_COMM_NA_NG_NA_SATL_Y13DLRPMCF_A", api_key="otkvu4KBWBAykqK83Zxi", type="ts")
+str(ngd)
+##  Time-Series [1:27] from 2014 to 2040: 10.2 9.52 8.85 9.27 9.91 ...
+head(ngd)
+## Time Series:
+## Start = 2014 
+## End = 2019 
+## Frequency = 1 
+## [1] 10.202365  9.518894  8.852833  9.270261  9.914866 10.537735
+18b.Plot graphs of the data, and try to identify an appropriate ARIMA model.
+
+autoplot(ngd)
+
+
+ngd %>% ndiffs()
+## [1] 1
+ggtsdisplay(diff(ngd))
+
+
+ngd.ar = auto.arima(ngd)
+summary(ngd.ar)
+## Series: ngd 
+## ARIMA(0,1,2) 
+## 
+## Coefficients:
+##          ma1     ma2
+##       0.8682  0.8879
+## s.e.  0.1313  0.2520
+## 
+## sigma^2 estimated as 0.04139:  log likelihood=3.92
+## AIC=-1.83   AICc=-0.74   BIC=1.94
+## 
+## Training set error measures:
+##                     ME      RMSE      MAE       MPE     MAPE      MASE
+## Training set 0.0239043 0.1918064 0.129958 0.2266583 1.239587 0.7440255
+##                     ACF1
+## Training set -0.04993646
+#ARIMA(0,1,2)
+18c.Do residual diagnostic checking of your ARIMA model. Are the residuals white noise?
+
+checkresiduals(ngd.ar)
+
+
+## 
+##  Ljung-Box test
+## 
+## data:  Residuals from ARIMA(0,1,2)
+## Q* = 7.0725, df = 3, p-value = 0.06962
+## 
+## Model df: 2.   Total lags used: 5
+#pretty close to white noise. I will try another
+
+ngd110 = Arima(ngd, order = c(1, 1, 0))
+checkresiduals(ngd110)
+
+
+## 
+##  Ljung-Box test
+## 
+## data:  Residuals from ARIMA(1,1,0)
+## Q* = 7.6448, df = 4, p-value = 0.1055
+## 
+## Model df: 1.   Total lags used: 5
+#white noise
+18d.Use your chosen ARIMA model to forecast the next four years.
+
+f.ngd110 = forecast(ngd110, h = 4)
+autoplot(f.ngd110)
+
+
+18e.Now try to identify an appropriate ETS model.
+
+ngd.ets = ets(ngd)
+summary(ngd.ets)
+## ETS(A,N,N) 
+## 
+## Call:
+##  ets(y = ngd) 
+## 
+##   Smoothing parameters:
+##     alpha = 0.9999 
+## 
+##   Initial states:
+##     l = 10.2023 
+## 
+##   sigma:  0.2964
+## 
+##      AIC     AICc      BIC 
+## 27.24963 28.29311 31.13714 
+## 
+## Training set error measures:
+##                      ME     RMSE       MAE       MPE     MAPE      MASE
+## Training set 0.05862132 0.285245 0.1682127 0.4917003 1.663627 0.9630386
+##                   ACF1
+## Training set 0.5005758
+autoplot(ngd.ets)
+
+
+18f.Do residual diagnostic checking of your ETS model. Are the residuals white noise?
+
+checkresiduals(ngd.ets)
+
+
+## 
+##  Ljung-Box test
+## 
+## data:  Residuals from ETS(A,N,N)
+## Q* = 14.02, df = 3, p-value = 0.002878
+## 
+## Model df: 2.   Total lags used: 5
+#close to white noise
+18g.Use your chosen ETS model to forecast the next four years.
+
+f.ngd.ets = forecast(ngd.ets, h = 4)
+autoplot(f.ngd.ets)
+
+
+18h.Which of the two models do you prefer?
+
+I prefer the ARIMA model.
